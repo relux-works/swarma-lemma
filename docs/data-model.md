@@ -1,97 +1,107 @@
 # Data model
 
-Draft for review, 2026-11-14.
+Draft for review, 2026-11-14. The v1 rules called provisional defaults make the contract deterministic; owner confirmation remains required before implementation.
 
 ## Model
 
-Store one versioned, typed directed multigraph across runtime-defined orthogonal dimensions, with an append-only event table. A stable logical node identity is shared across dimensions; immutable revisions identify exact content and relation history. The same revision may be projected into one or several dimensions, while each dimension may keep its own head revision and possibly disconnected subgraph. Dimensions are independent projections over the shared node set, not nested graph layers. Keep normative requirements, proposals, and rationale as distinct node kinds.
+Store one stable logical node identity across runtime-created dimensions. Immutable revisions hold claim content and lineage. A dimension projection selects the current accepted revision for one logical node and branch. Dimensions may contain disconnected projections over the shared node set; creating one is a data operation and does not require a schema migration.
 
-Each dimension projects the shared node identity into its own structure, links, revision head, and workflow state; a node may be projected into one, several, or all dimensions. Creating a dimension adds data and does not require a schema migration. A projection-local change leaves other dimensions unchanged unless an explicit cross-dimension relation or operation says otherwise. Use one active approved branch per dimension as a provisional default; whether branches are shared or independent remains open.
+Each new dimension atomically creates one active branch named `main`. V1 does not create concurrent branches. The branch is a selection context, not a structural root or a support root. Structural containment roots and accepted knowledge roots are separate concepts.
 
-Revision selection and support validity are separate projections. In the selected dimension and branch, `head_status` says whether an exact revision is the head, historical, deleted, or unknown; `support_state` says whether that revision is supported, unsupported, or not applicable at the requested event sequence. A dimension's selected head is not automatically supported. Invalidation records a cause and creates a successor revision; earlier revisions and their links remain historical. Whether each dependent that loses its final support needs a same-content successor revision, or only an event plus a derived unsupported state, remains open because revision fanout can be substantial.
-
-The first release supports dimension-local graph structure and revision history. A future implementation-dimension overlay could give a shared specification node an implementation-specific representation and workflow state, with task nodes that exist only in that dimension. This is an extension option, not an MVP requirement; preserve the shared node identity and keep overlay state distinct from normative validity.
+Keep proposal decisions, root assertions, head selection, and derived support in separate records or projections. A proposal never displaces an accepted head. Acceptance advances the selected head atomically; rejection records a decision and leaves the head unchanged. A revision may be projected into several dimensions, each with independent head, links, branch, and history.
 
 ## Records
 
 | Record | Required fields | Meaning |
 | --- | --- | --- |
 | Node | id, created_event_id | Stable logical identity shared across dimensions and revisions. |
-| NodeRevision | id, node_id, revision_no, based_on_revision_id?, kind, title, body, scope?, facets?, created_event_id | Immutable exact content revision. Revision numbers increase per logical node; based_on records lineage, including branches made by dimension-local edits. Kinds include requirement, decision, wish, option, exception, argument, evidence, source, question, and risk. |
-| Dimension | id, name, metadata, status, created_event_id | Runtime-created scope for an independently structured view over shared logical nodes and revisions. The set of dimensions is data, not a schema enum. |
-| DimensionProjection | dimension_id, branch_id, node_id, head_revision_id, acceptance_state, view_kind?, local_state?, attributes?, created_event_id | Represents a shared node identity in one orthogonal dimension and branch, selects that projection's head revision, records proposal/acceptance state, and carries dimension-local representation or workflow state. No projection means the node is absent from that dimension. |
-| SourceRef | revision_id, uri_or_source_id, locator, digest?, captured_at | Provenance for an exact revision. The locator is a heading, line range, section, or other stable source coordinate. A digest identifies source bytes, not truth. |
-| SupportGroup | id, dimension_id, target_revision_id, branch_id, created_event_id, status | One complete basis supporting a target revision in one dimension. All premise revisions in the group are required. |
-| EdgeVersion | id, dimension_id, branch_id, from_revision_id, relation, to_revision_id, created_event_id, properties | Immutable typed relation tied to exact revision endpoints in one dimension and branch, or to a support-group record. Multi-edges are allowed. A revision does not inherit links automatically. |
-| Event | seq, id, transaction_id, schema_version, type, target_id, revision_id?, dimension_id?, branch_id?, prior_head_id?, new_head_id?, affected_ids?, source_ref_ids?, at, actor_label, reason, basis_ids | Append-only state transition, revision change, dimension operation, deletion, or branch action. Events in one transaction apply atomically; schema_version supports replay across event-format changes. Deletion events record their exact scope and affected projections/links. Actor label records an assertion; it is not authentication. |
-| Branch | id, dimension_id, parent_branch_id, recovery_root_id, status, created_event_id | A historical or active approved context for a dimension. One active branch per dimension is the provisional v1 choice. |
-| ProjectionSnapshot | dimension_id, branch_id, event_seq, schema_version, digest, snapshot_data, created_event_id | Optional recovery checkpoint for deterministic replay from an event sequence; retain the event log as the source of truth. |
-| TaskRef | system, element_id, dimension_id, revision_id | External reference from a task element to an exact revision in a dimension. Resolved support state and graph sequence are returned by the resolver, not stored as task state. |
-| Conflict | id, dimension_id, branch_id, left_revision_id, right_revision_id, scope_overlap, source_evidence, comparison, status, resolution_event_id? | Candidate or confirmed incompatibility between exact revisions in a dimension and branch, with source spans and the comparison that raised it. Status is candidate, confirmed, resolved, deferred, or not_conflict. It does not change either endpoint's support validity automatically. |
+| NodeRevision | id, node_id, revision_no, based_on_revision_id?, kind, title, body, scope?, facets?, created_event_id | Immutable claim content and lineage. Revision numbers increase per logical node and are not used to restore a head. |
+| Dimension | id, name, metadata, status, created_event_id | Runtime-created scope for an independent projection. |
+| Branch | id, dimension_id, name, status, created_event_id | V1 creates one active `main` branch with each dimension. |
+| DimensionProjection | dimension_id, branch_id, node_id, head_revision_id?, created_event_id | Current accepted head for one logical node in one dimension and branch. The head may be empty until a first proposal is accepted; its prior-head stack is derived from committed selection events. |
+| Proposal | id, dimension_id, branch_id, node_id, revision_id, created_event_id | A pending presentation of exact immutable content for acceptance or rejection in one projection. Its displayed state is derived from `RevisionDecision`; creating a proposal does not select a head. |
+| RevisionDecision | dimension_id, branch_id, revision_id, state: proposed\|accepted\|rejected, reason?, event_id, seq | Append-only proposed, accepted, or rejected decision event for exact content in one projection. The proposal's displayed state is the latest decision; acceptance state is not stored only on the current head. |
+| RootAssertion | id, dimension_id, branch_id, revision_id, state, reason, created_event_id, withdrawn_event_id? | Explicit `active` or permanently `withdrawn` root assertion for an accepted revision. It is independent of containment and supports only while that exact revision is the selected head. |
+| SourceRef | id, revision_id, source_uri, locator, digest?, captured_event_id | Provenance for one exact revision. A digest identifies source bytes, not truth. |
+| SupportGroup | id, dimension_id, branch_id, target_revision_id, premise_revision_ids, created_event_id, withdrawn_event_id? | One accepted basis. Every premise is required; an explicit withdrawal is permanent. Pending group inputs belong to a proposal until acceptance. |
+| EdgeVersion | id, dimension_id, branch_id, from_endpoint, relation, to_endpoint, created_event_id | Immutable relation event with typed endpoints. Withdrawal appends an event; it does not edit or erase the edge. |
+| Event | seq, id, transaction_id, transaction_index, transaction_size, schema_version, type, dimension_id, branch_id, payload, at, actor_label, reason | Append-only transition. `dimension_id`, `branch_id`, and `actor_label` are explicit nullable fields where the contract allows. The actor label is an assertion, not authentication. All events in a transaction commit atomically. |
+| TaskRef | system, element_id, dimension_id, revision_id | Read-only external reference to an exact revision in one dimension. Resolution is computed, not stored as task status. |
+| Conflict | id, dimension_id, branch_id, left_revision_id, right_revision_id, evidence, status, created_event_id, resolution_event_id? | Candidate or human decision about two exact revisions. Conflict state does not change support. |
 
-Only accepted, supported head revisions of requirement and decision nodes, plus accepted supported scoped-exception heads, enter a dimension's normative view. Wishes and options are proposals; arguments, evidence, sources, questions, and risks explain or qualify them but do not become requirements by being imported. Status updates are events, not requirement nodes.
+Kinds are `requirement`, `decision`, `wish`, `option`, `exception`, `argument`, `evidence`, `source`, `question`, and `risk`. Only accepted, supported heads of requirement and decision kinds, plus accepted, supported scoped exceptions, enter the normative view. Wishes, options, and imported material remain proposals until an authorized human accepts them. Status updates are events, not requirement nodes. V1 permits one active `main` branch per dimension; branch creation and concurrent branches are deferred.
 
-The optional `view_kind` and local state on a dimension projection are overlays; they do not mutate the shared node identity or revision. For example, a requirement could be represented as a story in an implementation dimension, with separate task nodes and containment links in that dimension. The example overlay tracks code work and development state, not an assignee. Overlay state is not normative validity.
+## Typed relation endpoints
 
-Create, read, update, and delete operations on nodes, links, dimensions, and projections must preserve an auditable history. Updating content creates a new revision and advances the selected dimension's head; a revision may be selected in several dimensions. Deleting the latest revision in one dimension tombstones that selection and restores its previous revision when one exists. Deleting a node in one dimension withdraws only that projection; deleting the whole node tombstones it across dimensions. Deletion events record scope, target, reason, and prior/new heads. Revision and link records remain available in history rather than being physically erased; any need for secure physical purge is a separate retention decision.
+An edge endpoint is one tagged value; an implementation must not overload a revision ID with a support-group or projection ID:
 
-Links attach to exact revisions. Opening an earlier revision defaults to its accepted event sequence and returns the links that existed then, never later links folded onto that revision. An explicit graph `as_of_seq` reads a later snapshot and reports newly created edges by their own event and exact endpoints. Creating a new revision does not retarget historical links to the new or old revision; any copy-forward of links must be explicit and recorded. A selected dimension may point to a different head revision than another dimension for the same logical node.
+```json
+{ "kind": "revision", "id": "rev_<26 lowercase base32 characters>" }
+{ "kind": "support_group", "id": "sg_<26 lowercase base32 characters>" }
+{ "kind": "projection", "dimension_id": "dim_<26 lowercase base32 characters>", "node_id": "node_<26 lowercase base32 characters>", "branch_id": "branch_<26 lowercase base32 characters>" }
+{ "kind": "task", "system": "string", "element_id": "opaque string", "dimension_id": "dim_<26 lowercase base32 characters>" }
+```
 
-When a new head revision should retain unaffected relations or support groups, the operation explicitly creates replacement edge/group records that point to the new exact revision. It never changes the historical records. Impact previews include these copy-forward edges and any groups that no longer support the new head.
+The allowed endpoint kinds and effects are closed in the [CLI and JSON contract](contract.md#relation-endpoint-and-write-rules). Dimensions and branches are part of endpoint eligibility; equal IDs in another dimension do not imply a link.
 
-## Support and relation semantics
+## Proposal, root, and support lifecycle
 
-| Relation | Direction | Effect |
+1. Creating a dimension creates its active `main` branch in the same transaction. It creates no accepted knowledge root.
+2. Creating new content creates a stable logical node when needed, an immutable revision, a projection, and a pending proposal in one dimension. By default the new revision's `based_on_revision_id` is the current head; a proposal may instead name any earlier revision of the same logical node. `expected_head_revision_id` separately compare-and-swaps against the current projection head. Staging an already existing revision in a dimension where that node has never been projected creates a proposal for that exact revision without copying or changing its content. None of these paths changes the selected head.
+3. Accepting a proposal either records an active root assertion with no support groups, or accepts one or more complete support groups. The paths are mutually exclusive. The acceptance transaction validates the full proposed post-state before selecting the revision as head.
+4. A derived proposal needs at least one non-empty support group. Every premise must be the current accepted, supported head of a different logical node in the same dimension and branch. The target revision is never a premise of its own support group. Duplicate premises, empty groups, and a group whose premises form any accepted support cycle are refused.
+5. Rejection records the exact projection decision and reason without changing its head. Withdrawing a root assertion or support group is a separate append-only event. A withdrawn root or group is not reactivated by rollback.
+6. A selected head is supported only by an active root assertion for that exact revision or by at least one complete, non-withdrawn support group. An accepted historical revision has no current support state unless it becomes the selected head again through acceptance in an eligible projection or deletion-only rollback.
+
+For each `(node_id, dimension_id, branch_id)`, derive a prior-head stack from committed selection events. Accepting a proposal pushes the current non-null head, if any; `revisions.delete` pops and selects the top entry. A first accepted head has no predecessor, so deleting it returns `no_predecessor`. Proposal creation, rejection, link changes, and support-only changes do not affect this stack. The stack is independent across dimensions and branches. `based_on_revision_id` is content lineage only and never supplies a rollback target.
+
+This separates the proposal from the existing accepted head. A pending replacement can be reviewed while the old head remains current. A failed or rejected acceptance leaves the prior head, links, and support projection unchanged.
+
+## Support and invalidation
+
+Within one dimension and branch, premises in a support group are conjunctive (AND); several complete groups for the same target are alternatives (OR). A group is effective only while its target revision is the selected head and every exact premise revision remains the current supported head of its logical node. Only support groups propagate support changes.
+
+Compute support as the least fixed point that starts with selected heads carrying an active root assertion, then repeatedly adds selected heads with at least one complete group whose exact premises are already supported. A selected head outside that closure is unsupported. V1 refuses every cycle in accepted support groups, including cycles that also have a path to a root, so evaluation does not treat a cycle as its own evidence.
+
+The provisional v1 invalidation rule is: when a selected head changes, each support group citing the old exact premise becomes ineligible, then support is recomputed to a fixed point in that dimension and branch. A dependent that loses its final valid group keeps its accepted head revision and becomes unsupported; v1 does not synthesize same-content revisions for dependents. Unsupported heads stay queryable but leave normative search. No support change propagates across dimensions or branches.
+
+Support changes never advance or remove a head. A later head change requires a separately accepted proposal or the defined deletion-only rollback. An explicit withdrawal of a support group is permanent and is not reversed by head rollback. A group that is merely ineligible because a premise is no longer current may become valid again if that exact premise is restored as head; support is recomputed rather than copied from an earlier snapshot.
+
+For an accepted chain A1 → B1 → C1, replacing A1 with supported A2 leaves A2 as the supported head; B1 and C1 remain their accepted heads and become unsupported if their last complete group is lost. No B2 or C2 is created. If B1 also has a valid alternative group using D1, B1 and C1 remain supported. If its sole group is [A1, D1], loss of A1 makes both B1 and C1 unsupported. Exact task references remain stored and resolve their current head, acceptance, and support states as defined by the contract.
+
+## Relation and revision history
+
+| Relation | Typed endpoints | Eligibility and effect |
 | --- | --- | --- |
-| depends_on | support group → required premise revision | Each edge is one required premise in its group. The whole group is supported only when every premise is supported in the selected dimension and branch. |
-| justifies | support group → target revision | Multiple valid groups are alternative justifications. Support is present when the target is an accepted root or at least one complete group is valid. |
-| contains | parent revision → child revision | Organizes a dimension-local subtree. Moving or relinking changes this structure only in the selected dimension and does not propagate support validity. |
-| conflict_candidate | revision → revision | Records a detected pair for review. It does not assert a conflict or alter support validity. |
-| contradicts | revision → revision | Records a human-confirmed incompatibility. It does not invalidate either endpoint. Treat the pair as symmetric in queries. |
-| supports / objects_to | argument revision → option, decision, or requirement revision | Rationale links only; they do not establish support validity. |
-| refines / narrows | new revision → prior revision | Describes scope or lineage. It does not propagate validity unless the required premises are also represented in a support group. |
-| supersedes | new revision → prior revision | Records an accepted replacement. The prior revision and its links remain in history. |
-| regrows_from | new revision → unsupported or historical anchor revision | Records that an accepted replacement grew from a prior basis in the same dimension. No validity propagation. |
+| depends_on | support group → revision | A premise edge. The premise must be a current supported head in the same dimension and branch when its group is accepted. |
+| justifies | support group → revision | Names the exact proposed target; the group and target are accepted atomically. |
+| contains | projection → projection | Structural parent to child within one dimension and branch. At most one parent per child; cycles are refused. It does not affect support. |
+| conflict_candidate | revision → revision | Records a candidate between existing proposed or accepted revisions; no support effect. |
+| contradicts | revision → revision | Human-confirmed incompatibility between accepted revisions; symmetric in reads and does not invalidate either endpoint. |
+| supports / objects_to | revision → revision | Rationale/navigation links between accepted revisions; no support effect. |
+| refines / narrows | revision → revision | Scope or lineage explanation; no support effect. |
+| supersedes | current accepted head → prior accepted revision | Same logical node in one dimension; historical replacement record; no implicit validity propagation. |
+| regrows_from | current accepted head → unsupported historical revision | Same logical node and dimension. The historical revision is not reactivated. |
 | related_to | revision → revision | Navigation only; no automatic propagation. |
-| task_ref | task element → exact revision in a dimension | External reference only; never changes task status or content. |
+| task_ref | task → revision | External reference only; never changes task status or content. |
+| module_depends_on | projection → projection | Architecture navigation only; cycles are permitted and support does not propagate. |
 
-The `depends_on` relation is only the support-group-to-premise edge and is the only support-validity-propagating relation within a dimension in v1. Candidate conflicts, confirmed contradictions, rationale, containment, refinement, navigation, task references, and module architecture dependencies do not propagate support validity. No relation or state change propagates across dimensions implicitly. A `module_depends_on` relation is a separate architecture query and may contain cycles. Facets filter and classify nodes; they are not extra graph layers.
+Only `depends_on` support-group premises propagate support changes. `depends_on` and `justifies` edges are generated with their `SupportGroup` record and cannot be edited through ordinary link operations. Module architecture dependencies use the separate non-propagating `module_depends_on` relation and may contain cycles. Candidate conflicts, confirmed contradictions, rationale, containment, task references, and ordinary navigation never propagate support. No relation propagates across dimensions.
 
-All depends_on edges within one support group and dimension are conjunctive (AND). Multiple support groups for one target revision in that dimension are alternatives (OR). Only support-group premises participate in validity propagation. A change to one premise invalidates the groups that cite it; a node's head revision is unsupported in that dimension only if no other complete group remains valid and it is not an accepted root.
+Content changes create a new revision. Link-only changes do not create a node revision: the committed operation event records the exact typed endpoints, and edge history is projected from that event. A replace operation withdraws the prior edge and creates its replacement atomically. If a content revision should retain an old relation, the proposal must explicitly copy that edge to the new revision; no edge is retargeted implicitly.
 
-Reject cycles that have no path to an accepted root in the selected dimension. A circular pair of support groups must not make itself supported. A new support group must cite supported premise revisions in the selected dimension and branch. An unsupported revision cannot be reused as a premise or target for new support in that dimension; history relations such as supersedes and regrows_from may still refer to it.
+Each accepted revision projection records its dimension- and branch-specific acceptance sequence. Reading an exact revision defaults to that sequence and shows only edges active then. An explicit `as_of_seq` reads the later graph state and reports later edge events separately. If the same revision is projected into multiple dimensions, the selected dimension and branch determine the default sequence.
 
-## State projection
+## Head rollback and deletion
 
-Events are append-only; dimension heads, acceptance state, and support-group status are derived per-dimension projections. These three axes are not interchangeable.
+The provisional rollback rule is projection-local. Each head-selection event records the prior and new head for the same `(node_id, dimension_id, branch_id)`. `revisions.delete` applies only to the currently selected head and restores the head that was selected immediately before that head became current. It uses the selection-event history, not `based_on_revision_id`, revision number, or a head from another dimension or branch. For example, if `r1` is selected, `r2` is accepted with `based_on_revision_id: r0`, and then `r2` is deleted, the resulting head is exactly `r1`, not `r0`. If no prior selected head exists, deletion refuses without a write. The operation removes `r2` from the current projection only; the immutable revision, decision, sources, and edges remain in history.
 
-| State axis | Values and meaning |
-| --- | --- |
-| `head_status` | `head`, `historical`, `deleted`, or `unknown`, relative to one dimension, branch, and event sequence. Another dimension may select a different head. |
-| `acceptance_state` | `proposed`, `accepted`, or `rejected`; acceptance records review authority but does not establish support or truth. |
-| `support_state` | `supported`, `unsupported`, or `not_applicable`. A head is supported when it is an accepted root or has at least one complete valid support group in this dimension and branch. Unsupported can occur without replacement claim text. |
+Rollback is a head-selection event, not arbitrary historical reactivation and not a content edit. Recompute support at the new event sequence from current roots and groups; the restored head may be unsupported. A group that became ineligible only because its exact premise was not current may become valid again if rollback restores that premise. Explicitly withdrawn roots, groups, and edges remain withdrawn. The current link view is recomputed from edge events at that sequence using exact revision endpoints; there is no saved link-set snapshot to restore, and rollback does not copy, retarget, or reactivate any edge. Historical snapshots remain unchanged. Acceptance, root, support, and edge state in other dimensions is unchanged.
 
-A conflict state is stored separately and does not imply support or invalidation.
+Deletion scopes are distinct: deleting the selected revision rolls back one projection; removing a projection permanently removes the node from one dimension; tombstoning the logical node permanently hides it across dimensions. A removed projection cannot be added again in v1, preventing projection removal from becoming a path to historical head reactivation. Projection removal and tombstoning make any support group that cites the removed head ineligible and trigger support recomputation in each affected dimension and branch; they do not synthesize successor revisions. Edges remain in history and are absent from current eligible-edge views when an endpoint is no longer projected. All operations are auditable. Revisions, sources, events, and edge history are retained; physical purge requires a separate retention decision.
 
-A head revision may be supported or unsupported while it has a candidate, confirmed, deferred, or resolved conflict. Conflict status is stored separately from support validity. A detector creates candidates only; a human confirms and records the outcome. “Latest revision” means selected head; it does not by itself mean supported or true.
+## Time, search, and indexes
 
-Revision and support transitions are separate:
+V1 uses the global append-only event sequence for historical reads. Domain valid-time intervals are deferred until users need to represent when a fact applied in the world separately from when the system learned it. Search defaults to accepted supported heads in one explicit dimension and branch; proposals, unsupported heads, and history require explicit filters.
 
-- proposed → accepted head, rejected
-- accepted head → historical after a successor revision is accepted; the successor becomes the selected head
-- invalidation is a cause event that creates a successor revision; it does not mutate or delete the prior revision
-- support state is computed independently for the selected head and event sequence; the new head may be `unsupported`
-- repairing an unsupported basis creates a new revision, supported by exact premise revision IDs and linked to the old anchor with `regrows_from`
-- deleting the latest revision in one dimension is an auditable tombstone that selects the previous revision there; deleting a node in one dimension and deleting the whole logical node are separate scopes
-
-When a premise changes, first compute affected support groups and dependent nodes that would lose their final support in that dimension. Acceptance writes the source revision, explicit link versions, affected support-group updates, any successor revisions required by the selected invalidation policy, and resulting head/support projections atomically. If the transaction fails, the previous heads and support projections remain intact. Whether every dependent needs a same-content successor revision or only an invalidation event plus unsupported projection is an open choice because revision fanout can be large. Cross-dimension invalidation behavior is also open.
-
-## Branches, time, and regrowth
-
-A branch is an accepted projection with a dimension, parent branch, and recovery root. When an unsupported basis is repaired and accepted, create a successor revision (and, if chosen, a successor branch) in that dimension with a `regrows_from` relation to the historical anchor. Preserve the old branch and revision. Show a node's regrowth count as accepted replacement revisions directly anchored to it; count each accepted revision once, not each descendant. Confirm this metric with the product owner before presenting it publicly.
-
-Keep event sequence and system time in v1. Add domain valid-time intervals only if users need to represent when a fact applied in the world separately from when the system learned or revised it.
-
-## Indexes and queries
-
-Maintain indexes for dimension projection/head revision, logical node and revision IDs, revision lineage, dimension plus acceptance/support state, node kind, facets, source references, branch membership, dimension-scoped incoming/outgoing revision links, support-group membership, and task references. Keep current-view and full-history FTS indexes distinct so history stays opt-in. Search a selected dimension by default. Cross-dimension secondary indexes may speed queries but increase storage and write maintenance; measure need before adding them. Keep small in-memory adjacency and support-count indexes for hot impact queries if measurements justify them.
+Index logical node and revision IDs, per-dimension projections and heads, revision decisions, root assertions, support-group membership, branch membership, source refs, facets, and dimension-scoped incoming/outgoing edges. Keep current-view and full-history text indexes separate. Additional cross-dimension indexes and in-memory adjacency/support-count indexes remain optional until representative measurements justify their write and storage cost.
