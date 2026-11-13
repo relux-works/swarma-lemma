@@ -10,6 +10,13 @@ Research and design. Production implementation, a Go module, a CLI, and an agent
 
 There are no product build, test, or run commands at this stage. Go version and implementation details remain to be selected during design.
 
+## Design documents
+
+- [Research synthesis](docs/research.md)
+- [Data model](docs/data-model.md)
+- [CLI and JSON contract draft](docs/contract.md)
+- [MVP scope and risks](docs/mvp-scope.md)
+
 ## Tools
 
 | Tool | Use | Entry point | Output |
